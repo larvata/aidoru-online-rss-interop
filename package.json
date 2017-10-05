@@ -1,0 +1,23 @@
+{
+  "name": "aidoru-online-rss-interop",
+  "version": "0.1.0",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "node ."
+  },
+  "devDependencies": {
+    "eslint": "^4.7.1",
+    "eslint-config-airbnb-base": "^12.0.0",
+    "eslint-plugin-import": "^2.7.0"
+  },
+  "dependencies": {
+    "feedparser": "^2.2.1",
+    "https-proxy-agent": "^2.1.0",
+    "koa": "^2.3.0",
+    "koa-route": "^3.2.0",
+    "koa-send": "^4.1.1",
+    "request": "^2.82.0",
+    "rss": "^1.2.2"
+  }
+}

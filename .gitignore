@@ -1,0 +1,4 @@
+node_modules/
+docker-for-test/
+torrent-cache/*.torrent
+/config.js
