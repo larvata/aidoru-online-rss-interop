@@ -292,6 +292,9 @@ const backgroundWork = () => {
       }
 
       setTimeout(backgroundWork, config.CHECK_INTERVAL);
+    })
+    .catch((err) => {
+      console.log(err);
     });
 };
 
