@@ -8,7 +8,7 @@ const config = require('../config');
 const jar = _request.jar();
 let request = null;
 if (config.HTTP_PROXY_HOST && config.HTTP_PROXY_PORT) {
-  request = _request.defaults({ jar, proxy: `http://${config.HTTP_PROXY_HOST}:${config.HTTP_PROXY_PORT}` })
+  request = _request.defaults({ jar, proxy: `http://${config.HTTP_PROXY_HOST}:${config.HTTP_PROXY_PORT}` });
 }
 else {
   request = _request.defaults({ jar });
@@ -17,6 +17,7 @@ else {
 const AO_URL_BASE = 'https://aidoru-online.org/';
 const AO_URL_LOGIN = 'https://aidoru-online.org/login.php?type=login';
 const AO_URL_RSS = 'https://aidoru-online.org/rss.php';
+const AO_SERVICE_RETRY_TIMEOUT = 5 * 60 * 1000;
 
 const HTTP_STATUS_CODE = {
   OK: 200,
@@ -294,7 +295,9 @@ const backgroundWork = () => {
       setTimeout(backgroundWork, config.CHECK_INTERVAL);
     })
     .catch((err) => {
-      console.log(err);
+      console.log('aoService error: ', err);
+      console.log('restart aoService after 5 mins');
+      setTimeout(backgroundWork, AO_SERVICE_RETRY_TIMEOUT);
     });
 };
 
