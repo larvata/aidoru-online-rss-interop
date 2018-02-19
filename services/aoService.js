@@ -15,7 +15,8 @@ else {
 }
 
 const AO_URL_BASE = 'https://aidoru-online.org/';
-const AO_URL_LOGIN = 'https://aidoru-online.org/login.php?type=login';
+const AO_URL_LOGIN_ENDPOINT = 'https://aidoru-online.org/login.php?type=login';
+const AO_URL_LOGIN_PAGE = 'https://aidoru-online.org/login.php';
 const AO_URL_RSS = 'https://aidoru-online.org/rss.php';
 const AO_SERVICE_RETRY_TIMEOUT = 5 * 60 * 1000;
 
@@ -43,7 +44,7 @@ const findSessionId = (setCookieList) => {
 const checkLoginState = () => {
   // console.log('- checkLoginState');
   return new Promise((resolve, reject) => {
-    request.get(AO_URL_LOGIN, (err, res, body) => {
+    request.get(AO_URL_BASE, (err, res, body) => {
       const result = {
         authenticated: false,
         csrfpToken: null,
@@ -56,16 +57,49 @@ const checkLoginState = () => {
       } else {
         // when session not authenticated a set cookie header will attached to the response header
 
-        // get csrpf
-        const cookies = jar.getCookies('https://aidoru-online.org');
-        const csrfpCookie = cookies.find(c => (c.key === 'csrfp_token'));
-        result.csrfpToken = csrfpCookie.value;
+        // // get csrpf
+        // const cookies = jar.getCookies('https://aidoru-online.org');
+        // const csrfpCookie = cookies.find(c => (c.key === 'csrfp_token'));
+        // result.csrfpToken = csrfpCookie.value;
 
         const authenticated = !res.headers.refresh;
         result.authenticated = authenticated;
       }
 
       // console.log('-> checkLoginState:', JSON.stringify(result));
+      if (result.error) {
+        return reject(result);
+      }
+      return resolve(result);
+    });
+  });
+};
+
+// get the csrpf token from login page
+const getCSRFPToken = () => {
+  return new Promise((resolve, reject) => {
+    request.get(AO_URL_LOGIN_PAGE, (err, res, body) => {
+      const result = {
+        authenticated: false,
+        csrfpToken: null,
+        error: null,
+      };
+
+      if (err) {
+        result.error = err.message;
+      } else if (res.statusCode !== HTTP_STATUS_CODE.OK) {
+        result.error = `status code wrong: ${res.statusCode}`;
+      } else {
+        // get csrpf
+        const cookies = jar.getCookies(AO_URL_BASE);
+        const csrfpCookie = cookies.find(c => (c.key === 'csrfp_token'));
+        result.csrfpToken = csrfpCookie.value;
+
+        // set ufp cookie which is required for login
+        jar.setCookie(`ufp=${config.AO_UFP}`, AO_URL_BASE);
+      }
+
+      // console.log('-> getCSRFPToken:', JSON.stringify(result));
       if (result.error) {
         return reject(result);
       }
@@ -82,7 +116,7 @@ const login = (csrfpToken) => {
       error: null,
     };
     request.post({
-      url: AO_URL_LOGIN,
+      url: AO_URL_LOGIN_ENDPOINT,
       form: {
         username: config.AO_USERNAME,
         password: config.AO_PASSWORD,
@@ -90,8 +124,13 @@ const login = (csrfpToken) => {
         csrfp_token: csrfpToken,
       },
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept-Encoding': 'gzip,deflate',
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+        'accept-encoding': 'gzip, deflate, br',
+        'accept-language': 'en-US,en;q=0.9,ja;q=0.8,zh-CN;q=0.7,zh;q=0.6',
+        'content-type': 'application/x-www-form-urlencoded',
+        origin: 'https://aidoru-online.org',
+        referer: 'https://aidoru-online.org/login.php',
+        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/66.0.3343.3 Safari/537.36',
       },
     }, (err, res, body) => {
       if (err) {
@@ -123,7 +162,7 @@ const keepLoginState = () => {
       const { authenticated, csrfpToken, error } = result;
       if (!authenticated) {
         // not logged in, try login first
-        return login(csrfpToken);
+        return getCSRFPToken().then(ret => login(ret.csrfpToken));
       }
 
       // console.log('keepLoginState: ', JSON.stringify(result, null, 2));
@@ -180,6 +219,13 @@ const loadRSS = () => {
       while (item = feedparser.read()) {
         result.feed.items.push(item);
       }
+    });
+
+    feedparser.on('error', (err) => {
+      console.log('>>>', err);
+      // console.log(feedparser);
+      result.error = err.message;
+      return resolve(result);
     });
 
     feedparser.on('end', () => {
@@ -289,7 +335,7 @@ const backgroundWork = () => {
           });
         });
         feedContentXML = rss.xml({ indent: true });
-        console.log('new xml has been updated.');
+        console.log(new Date().toString(), 'new xml has been updated.');
       }
 
       setTimeout(backgroundWork, config.CHECK_INTERVAL);
