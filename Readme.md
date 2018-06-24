@@ -13,3 +13,6 @@ nano config.js
 npm install && npm start
 
 ```
+
+service url:
+http://localhost:<your_port_in_config>/feeds.rss
