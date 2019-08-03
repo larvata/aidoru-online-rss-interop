@@ -3,22 +3,24 @@ const fs = require('fs');
 const FeedParser = require('feedparser');
 const RSS = require('rss');
 const _request = require('request');
-const config = require('../config');
 
 const jar = _request.jar();
-let request = null;
-if (config.HTTP_PROXY_HOST && config.HTTP_PROXY_PORT) {
-  request = _request.defaults({ jar, proxy: `http://${config.HTTP_PROXY_HOST}:${config.HTTP_PROXY_PORT}` });
-}
-else {
-  request = _request.defaults({ jar });
-}
+const request = _request.defaults({ jar });
+const config = require('../config');
 
-const AO_URL_BASE = 'https://aidoru-online.org/';
-const AO_URL_LOGIN_ENDPOINT = 'https://aidoru-online.org/login.php?type=login';
-const AO_URL_LOGIN_PAGE = 'https://aidoru-online.org/login.php';
-const AO_URL_RSS = 'https://aidoru-online.org/rss.php';
+const FAKE_FINGERPRINT = (
+  Math.random().toString(16).substring(2, 10)
+  + Math.random().toString(16).substring(2, 10)
+  + Math.random().toString(16).substring(2, 10)
+  + Math.random().toString(16).substring(2, 10));
+
+const AO_URL_BASE = 'https://aidoru-online.me/';
+const AO_URL_ACCOUNT_UPD = 'https://aidoru-online.me/account-upd.php';
+const AO_URL_LOGIN_PAGE = 'https://aidoru-online.me/login.php';
+const AO_URL_LOGIN_ENDPOINT = 'https://aidoru-online.me/login.php?type=login';
+const AO_URL_RSS = 'https://aidoru-online.me/rss.php';
 const AO_SERVICE_RETRY_TIMEOUT = 5 * 60 * 1000;
+
 
 const HTTP_STATUS_CODE = {
   OK: 200,
@@ -27,13 +29,25 @@ const HTTP_STATUS_CODE = {
 let feedContentRaw = null;
 let feedContentXML = null;
 
+const requestPromise = options => new Promise((resolve, reject) => {
+  request(options, (err, res) => {
+    if (err) {
+      return reject(err);
+    }
+    if (res.statusCode !== HTTP_STATUS_CODE.OK) {
+      return reject(new Error(`status code wrong: ${res.statusCode}`));
+    }
+    return resolve(res);
+  });
+});
+
 
 const findSessionId = (setCookieList) => {
   let result = '';
   setCookieList.some((cookie) => {
     const match = cookie.match(/sid=(\S+);/);
     if (match) {
-      result = match[1];
+      [, result] = match;
       return true;
     }
     return false;
@@ -42,114 +56,60 @@ const findSessionId = (setCookieList) => {
 };
 
 const checkLoginState = () => {
-  // console.log('- checkLoginState');
-  return new Promise((resolve, reject) => {
-    request.get(AO_URL_BASE, (err, res, body) => {
-      const result = {
-        authenticated: false,
-        csrfpToken: null,
-        error: null,
-      };
-      if (err) {
-        result.error = err.message;
-      } else if (res.statusCode !== HTTP_STATUS_CODE.OK) {
-        result.error = `status code wrong: ${res.statusCode}`;
-      } else {
-        // when session not authenticated a set cookie header will attached to the response header
-
-        // // get csrpf
-        // const cookies = jar.getCookies('https://aidoru-online.org');
-        // const csrfpCookie = cookies.find(c => (c.key === 'csrfp_token'));
-        // result.csrfpToken = csrfpCookie.value;
-
-        const authenticated = !res.headers.refresh;
-        result.authenticated = authenticated;
-      }
-
-      // console.log('-> checkLoginState:', JSON.stringify(result));
-      if (result.error) {
-        return reject(result);
-      }
-      return resolve(result);
-    });
+  return requestPromise({
+    url: AO_URL_BASE,
+  }).then((res) => {
+    const authenticated = !res.headers.refresh;
+    return { authenticated };
   });
 };
 
-// get the csrpf token from login page
-const getCSRFPToken = () => {
-  return new Promise((resolve, reject) => {
-    request.get(AO_URL_LOGIN_PAGE, (err, res, body) => {
-      const result = {
-        authenticated: false,
-        csrfpToken: null,
-        error: null,
-      };
-
-      if (err) {
-        result.error = err.message;
-      } else if (res.statusCode !== HTTP_STATUS_CODE.OK) {
-        result.error = `status code wrong: ${res.statusCode}`;
-      } else {
-        // get csrpf
-        const cookies = jar.getCookies(AO_URL_BASE);
-        const csrfpCookie = cookies.find(c => (c.key === 'csrfp_token'));
-        result.csrfpToken = csrfpCookie.value;
-
-        // set ufp cookie which is required for login
-        jar.setCookie(`ufp=${config.AO_UFP}`, AO_URL_BASE);
-      }
-
-      // console.log('-> getCSRFPToken:', JSON.stringify(result));
-      if (result.error) {
-        return reject(result);
-      }
-      return resolve(result);
-    });
+const loadLoadingPage = () => {
+  return requestPromise({
+    url: AO_URL_LOGIN_PAGE,
   });
 };
 
-const login = (csrfpToken) => {
-  // console.log('- login');
-  return new Promise((resolve, reject) => {
-    const result = {
-      authenticated: false,
-      error: null,
-    };
-    request.post({
-      url: AO_URL_LOGIN_ENDPOINT,
-      form: {
-        username: config.AO_USERNAME,
-        password: config.AO_PASSWORD,
-        do: 'login',
-        csrfp_token: csrfpToken,
-      },
-      headers: {
-        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-        'accept-encoding': 'gzip, deflate, br',
-        'accept-language': 'en-US,en;q=0.9,ja;q=0.8,zh-CN;q=0.7,zh;q=0.6',
-        'content-type': 'application/x-www-form-urlencoded',
-        origin: 'https://aidoru-online.org',
-        referer: 'https://aidoru-online.org/login.php',
-        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/66.0.3343.3 Safari/537.36',
-      },
-    }, (err, res, body) => {
-      if (err) {
-        result.error = err.message;
-      } else if (res.statusCode !== HTTP_STATUS_CODE.OK) {
-        result.error = `status code wrong: ${res.statusCode}`;
-      } else {
-        const setCookieList = res.headers['set-cookie'];
-        const sid = findSessionId(setCookieList);
-        const authenticated = !!sid;
-        result.authenticated = authenticated;
-      }
+const accountUpdate = () => {
+  return requestPromise({
+    method: 'POST',
+    url: AO_URL_ACCOUNT_UPD,
+    form: {
+      f: FAKE_FINGERPRINT,
+    },
+    headers: {
+      Referer: 'https://aidoru-online.me/login.php',
+      Origin: 'https://aidoru-online.me',
+      'X-Requested-With': 'XMLHttpRequest',
+    },
+  });
+};
 
-      // console.log('-> login:', JSON.stringify(result));
-      if (result.error) {
-        return reject(result);
-      }
-      return resolve(result);
-    });
+const doLogin = () => {
+  return requestPromise({
+    method: 'POST',
+    url: AO_URL_LOGIN_ENDPOINT,
+    form: {
+      username: config.AO_USERNAME,
+      password: config.AO_PASSWORD,
+      do: 'login',
+      language: '',
+      // csrfp_token: csrfpToken,
+    },
+    headers: {
+      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+      'accept-encoding': 'gzip, deflate, br',
+      'accept-language': 'en-US,en;q=0.9,ja;q=0.8,zh-CN;q=0.7,zh;q=0.6',
+      'content-type': 'application/x-www-form-urlencoded',
+      origin: 'https://aidoru-online.me',
+      referer: 'https://aidoru-online.me/login.php',
+      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/66.0.3343.3 Safari/537.36',
+    },
+  }).then((res) => {
+    const setCookieList = res.headers['set-cookie'];
+    const sid = findSessionId(setCookieList);
+    const authenticated = !!sid;
+    return { authenticated };
   });
 };
 
@@ -159,14 +119,15 @@ const login = (csrfpToken) => {
 const keepLoginState = () => {
   return checkLoginState()
     .then((result) => {
-      const { authenticated, csrfpToken, error } = result;
+      const { authenticated } = result;
       if (!authenticated) {
         // not logged in, try login first
-        return getCSRFPToken().then(ret => login(ret.csrfpToken));
+        // return getCSRFPToken().then(ret => login(ret.csrfpToken));
+        return loadLoadingPage().then(accountUpdate).then(doLogin);
       }
 
       // console.log('keepLoginState: ', JSON.stringify(result, null, 2));
-      return Promise.resolve(result);
+      return result;
     });
 };
 
@@ -189,9 +150,9 @@ const loadRSS = () => {
       url: AO_URL_RSS,
       gzip: true,
       headers: {
-        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
         'accept-language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7,ja;q=0.6',
-        'referer': 'https://aidoru-online.org/',
+        referer: 'https://aidoru-online.me/',
         'upgrade-insecure-requests': 1,
         'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/63.0.3218.0 Safari/537.36',
       },
@@ -207,10 +168,8 @@ const loadRSS = () => {
       if (res.statusCode !== HTTP_STATUS_CODE.OK) {
         result.error = `status code wrong: ${res.statusCode}`;
         return resolve(resolve);
-      } else {
-        // console.log(res.body);
-        req.pipe(feedparser);
       }
+      req.pipe(feedparser);
     });
 
     feedparser.on('readable', () => {
@@ -256,7 +215,7 @@ const downloadTorrentFile = (feedItem) => {
     torrentId,
   };
 
-  const torrentUrl = `https://aidoru-online.org/download.php?id=${torrentId}`;
+  const torrentUrl = `https://aidoru-online.me/download.php?id=${torrentId}`;
   const filePath = `torrent-cache/${torrentId}.torrent`;
   return new Promise((resolve, reject) => {
     if (fs.existsSync(filePath)) {
@@ -313,7 +272,7 @@ const backgroundWork = () => {
       const torrentTasks = feed.items.map(downloadTorrentFile);
       return doDownloadQueue(torrentTasks);
     })
-    .then(result => {
+    .then((result) => {
       // update the source feed content
       if (feedContentRaw) {
         const rss = new RSS({
